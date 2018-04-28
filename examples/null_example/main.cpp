@@ -1,9 +1,11 @@
 // ImGui - null/dummy example application (compile and link imgui with no inputs, no outputs)
-#include <imgui.h>
+#include "imgui.h"
 #include <stdio.h>
 
 int main(int, char**)
 {
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
 
     // Build atlas
@@ -27,7 +29,7 @@ int main(int, char**)
         ImGui::Render();
     }
 
-    printf("Shutdown()\n");
-    ImGui::Shutdown();
+    printf("DestroyContext()\n");
+    ImGui::DestroyContext();
     return 0;
 }
