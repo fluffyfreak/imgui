@@ -1,5 +1,7 @@
-// ImGui GLFW binding with Vulkan + shaders
-// FIXME: Changes of ImTextureID aren't supported by this binding! Please, someone add it!
+// ImGui SDL2 binding with Vulkan + shaders
+
+// Missing features:
+//  [ ] User texture binding. Changes of ImTextureID aren't supported by this binding! See https://github.com/ocornut/imgui/pull/914
 
 // You can copy and use unmodified imgui_impl_* files in your project. See main.cpp for an example of using this.
 // If you use this binding you'll need to call 5 functions: ImGui_ImplXXXX_Init(), ImGui_ImplXXX_CreateFontsTexture(), ImGui_ImplXXXX_NewFrame(), ImGui_ImplXXXX_Render() and ImGui_ImplXXXX_Shutdown().
@@ -8,7 +10,7 @@
 
 #include <imgui.h>
 
-// SDL,GL3W
+// SDL,VULKAN
 #include <SDL.h>
 #include <SDL_syswm.h>
 #include <vulkan/vulkan.h>
@@ -31,7 +33,7 @@ static VkDescriptorPool       g_DescriptorPool = VK_NULL_HANDLE;
 static void (*g_CheckVkResult)(VkResult err) = NULL;
 
 static VkCommandBuffer        g_CommandBuffer = VK_NULL_HANDLE;
-static uint64_t               g_BufferMemoryAlignment = 256;
+static VkDeviceSize           g_BufferMemoryAlignment = 256;
 static VkPipelineCreateFlags  g_PipelineCreateFlags = 0;
 static int                    g_FrameIndex = 0;
 
@@ -47,8 +49,8 @@ static VkImageView            g_FontView = VK_NULL_HANDLE;
 
 static VkDeviceMemory         g_VertexBufferMemory[IMGUI_VK_QUEUED_FRAMES] = {};
 static VkDeviceMemory         g_IndexBufferMemory[IMGUI_VK_QUEUED_FRAMES] = {};
-static uint64_t               g_VertexBufferSize[IMGUI_VK_QUEUED_FRAMES] = {};
-static uint64_t               g_IndexBufferSize[IMGUI_VK_QUEUED_FRAMES] = {};
+static VkDeviceSize           g_VertexBufferSize[IMGUI_VK_QUEUED_FRAMES] = {};
+static VkDeviceSize           g_IndexBufferSize[IMGUI_VK_QUEUED_FRAMES] = {};
 static VkBuffer               g_VertexBuffer[IMGUI_VK_QUEUED_FRAMES] = {};
 static VkBuffer               g_IndexBuffer[IMGUI_VK_QUEUED_FRAMES] = {};
 
@@ -148,10 +150,12 @@ static void ImGui_ImplSdlVulkan_VkResult(VkResult err)
 }
 
 // This is the main rendering function that you have to implement and provide to ImGui (via setting up 'RenderDrawListsFn' in the ImGuiIO structure)
-void ImGui_ImplSdlVulkan_RenderDrawLists(ImDrawData* draw_data)
+void ImGui_ImplSdlVulkan_RenderDrawData(ImDrawData* draw_data)
 {
     VkResult err;
     ImGuiIO& io = ImGui::GetIO();
+    if (draw_data->TotalVtxCount == 0)
+        return;
 
     // Create the Vertex Buffer:
     size_t vertex_size = draw_data->TotalVtxCount * sizeof(ImDrawVert);
@@ -161,7 +165,7 @@ void ImGui_ImplSdlVulkan_RenderDrawLists(ImDrawData* draw_data)
             vkDestroyBuffer(g_Device, g_VertexBuffer[g_FrameIndex], g_Allocator);
         if (g_VertexBufferMemory[g_FrameIndex])
             vkFreeMemory(g_Device, g_VertexBufferMemory[g_FrameIndex], g_Allocator);
-        uint64_t vertex_buffer_size = ((vertex_size-1) / g_BufferMemoryAlignment+1) * g_BufferMemoryAlignment;
+        VkDeviceSize vertex_buffer_size = ((vertex_size-1) / g_BufferMemoryAlignment+1) * g_BufferMemoryAlignment;
         VkBufferCreateInfo buffer_info = {};
         buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
         buffer_info.size = vertex_buffer_size;
@@ -191,7 +195,7 @@ void ImGui_ImplSdlVulkan_RenderDrawLists(ImDrawData* draw_data)
             vkDestroyBuffer(g_Device, g_IndexBuffer[g_FrameIndex], g_Allocator);
         if (g_IndexBufferMemory[g_FrameIndex])
             vkFreeMemory(g_Device, g_IndexBufferMemory[g_FrameIndex], g_Allocator);
-        uint64_t index_buffer_size = ((index_size-1) / g_BufferMemoryAlignment+1) * g_BufferMemoryAlignment;
+        VkDeviceSize index_buffer_size = ((index_size-1) / g_BufferMemoryAlignment+1) * g_BufferMemoryAlignment;
         VkBufferCreateInfo buffer_info = {};
         buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
         buffer_info.size = index_buffer_size;
@@ -232,10 +236,10 @@ void ImGui_ImplSdlVulkan_RenderDrawLists(ImDrawData* draw_data)
         VkMappedMemoryRange range[2] = {};
         range[0].sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
         range[0].memory = g_VertexBufferMemory[g_FrameIndex];
-        range[0].size = vertex_size;
+        range[0].size = VK_WHOLE_SIZE;
         range[1].sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
         range[1].memory = g_IndexBufferMemory[g_FrameIndex];
-        range[1].size = index_size;
+        range[1].size = VK_WHOLE_SIZE;
         err = vkFlushMappedMemoryRanges(g_Device, 2, range);
         ImGui_ImplSdlVulkan_VkResult(err);
         vkUnmapMemory(g_Device, g_VertexBufferMemory[g_FrameIndex]);
@@ -297,10 +301,10 @@ void ImGui_ImplSdlVulkan_RenderDrawLists(ImDrawData* draw_data)
             else
             {
                 VkRect2D scissor;
-                scissor.offset.x = (int32_t)(pcmd->ClipRect.x);
-                scissor.offset.y = (int32_t)(pcmd->ClipRect.y);
+                scissor.offset.x = (int32_t)(pcmd->ClipRect.x) > 0 ? (int32_t)(pcmd->ClipRect.x) : 0;
+                scissor.offset.y = (int32_t)(pcmd->ClipRect.y) > 0 ? (int32_t)(pcmd->ClipRect.y) : 0;
                 scissor.extent.width = (uint32_t)(pcmd->ClipRect.z - pcmd->ClipRect.x);
-                scissor.extent.height = (uint32_t)(pcmd->ClipRect.w - pcmd->ClipRect.y + 1); // TODO: + 1??????
+                scissor.extent.height = (uint32_t)(pcmd->ClipRect.w - pcmd->ClipRect.y + 1); // FIXME: Why +1 here?
                 vkCmdSetScissor(g_CommandBuffer, 0, 1, &scissor);
                 vkCmdDrawIndexed(g_CommandBuffer, pcmd->ElemCount, 1, idx_offset, vtx_offset, 0);
             }
@@ -499,6 +503,7 @@ bool ImGui_ImplSdlVulkan_CreateFontsTexture(VkCommandBuffer command_buffer)
         region.imageSubresource.layerCount = 1;
         region.imageExtent.width = width;
         region.imageExtent.height = height;
+        region.imageExtent.depth = 1;
         vkCmdCopyBufferToImage(command_buffer, g_UploadBuffer, g_FontImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
         VkImageMemoryBarrier use_barrier[1] = {};
@@ -556,6 +561,7 @@ bool ImGui_ImplSdlVulkan_CreateDeviceObjects()
         info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
         info.minLod = -1000;
         info.maxLod = 1000;
+        info.maxAnisotropy = 1.0f;
         err = vkCreateSampler(g_Device, &info, g_Allocator, &g_FontSampler);
         ImGui_ImplSdlVulkan_VkResult(err);
     }
@@ -755,7 +761,11 @@ bool    ImGui_ImplSdlVulkan_Init(SDL_Window* window, resize_callback callback, I
 
     g_Window = window;
 
+    // Setup back-end capabilities flags
     ImGuiIO& io = ImGui::GetIO();
+    io.BackendFlags |= ImGuiBackendFlags_HasMouseCursors;   // We can honor GetMouseCursor() values (optional)
+
+    // Keyboard mapping. ImGui will use those indices to peek into the io.KeysDown[] array.
     io.KeyMap[ImGuiKey_Tab] = SDLK_TAB;                     // Keyboard mapping. ImGui will use those indices to peek into the io.KeyDown[] array.
     io.KeyMap[ImGuiKey_LeftArrow] = SDL_SCANCODE_LEFT;
     io.KeyMap[ImGuiKey_RightArrow] = SDL_SCANCODE_RIGHT;
@@ -776,7 +786,6 @@ bool    ImGui_ImplSdlVulkan_Init(SDL_Window* window, resize_callback callback, I
     io.KeyMap[ImGuiKey_Y] = SDLK_y;
     io.KeyMap[ImGuiKey_Z] = SDLK_z;
 
-    io.RenderDrawListsFn = ImGui_ImplSdlVulkan_RenderDrawLists;       // Alternatively you can set this to NULL and call ImGui::GetDrawData() after ImGui::Render() to get the same ImDrawData pointer.
     io.SetClipboardTextFn = ImGui_ImplSdlVulkan_SetClipboardText;
     io.GetClipboardTextFn = ImGui_ImplSdlVulkan_GetClipboardText;
     io.ClipboardUserData = g_Window;
@@ -797,7 +806,6 @@ bool    ImGui_ImplSdlVulkan_Init(SDL_Window* window, resize_callback callback, I
 void ImGui_ImplSdlVulkan_Shutdown()
 {
     ImGui_ImplSdlVulkan_InvalidateDeviceObjects();
-    ImGui::Shutdown();
 }
 
 void ImGui_ImplSdlVulkan_NewFrame()
@@ -846,6 +854,7 @@ void ImGui_ImplSdlVulkan_Render(VkCommandBuffer command_buffer)
 {
     g_CommandBuffer = command_buffer;
     ImGui::Render();
+    ImGui_ImplSdlVulkan_RenderDrawData(ImGui::GetDrawData());
     g_CommandBuffer = VK_NULL_HANDLE;
     g_FrameIndex = (g_FrameIndex + 1) % IMGUI_VK_QUEUED_FRAMES;
 }
